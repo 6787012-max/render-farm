@@ -1,0 +1,60 @@
+name: render
+run-name: ${{ inputs.job }}
+# One render job (sent by C:/tools/remote-render/remote_render.py). The inputs arrive XOR-scrambled on branch in/<job>;
+# every shard runs the job's command on its slice, the merge step joins the slices, and the result goes back
+# XOR-scrambled on branch out/<job>. The client deletes both branches after it has the files.
+on:
+  workflow_dispatch:
+    inputs:
+      job: { description: 'job id (branch in/<job>)', required: true, type: string }
+      shards: { description: 'JSON list of shard numbers, e.g. [0,1,2]', required: false, type: string, default: '[0]' }
+      nshards: { description: 'how many shards', required: false, type: string, default: '1' }
+permissions:
+  contents: write
+jobs:
+  part:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    env:
+      FARM: ${{ github.workspace }}
+      SHARD: ${{ matrix.shard }}
+      SHARDS: ${{ inputs.nshards }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { ref: 'in/${{ inputs.job }}', path: injob }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: bash runner/setup.sh
+      - run: python runner/stage.py part injob /tmp/w
+      - if: inputs.nshards == '1'
+        run: python runner/stage.py merge injob /tmp/w
+      - if: inputs.nshards == '1'
+        run: python runner/push_result.py /tmp/w/out "${{ inputs.job }}"
+        env: { GH_TOKEN: '${{ github.token }}' }
+      - if: inputs.nshards != '1'
+        uses: actions/upload-artifact@v4
+        with: { name: 'part-${{ matrix.shard }}', path: /tmp/w/out, retention-days: 1, compression-level: 0, if-no-files-found: error }
+  merge:
+    if: inputs.nshards != '1'
+    needs: part
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FARM: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { ref: 'in/${{ inputs.job }}', path: injob }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: bash runner/setup.sh --no-browser
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'part-*', path: /tmp/w/out, merge-multiple: true }
+      - run: python runner/stage.py merge injob /tmp/w
+      - run: python runner/push_result.py /tmp/w/out "${{ inputs.job }}"
+        env: { GH_TOKEN: '${{ github.token }}' }
