@@ -60,7 +60,7 @@ frames = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-c
 for f in parts + glob.glob(O + 'err_*.json') + [O + 'meta.json']:
     os.remove(f)
 rep = {'dur': length, 'video_dur': round(vdur, 2), 'frames_expected': meta['frames'], 'frames': int(frames or 0), 'parts': len(parts),
-       'sfx': len(mix) - (1 if music else 0), 'audio_mix_exit': code, 'size_kb': os.path.getsize(out) // 1024 if os.path.exists(out) else 0, 'errors': errors[:20]}
+       'sfx': len(mix) - (1 if music else 0), 'sfx_list': meta['sfx'], 'audio_mix_exit': code, 'size_kb': os.path.getsize(out) // 1024 if os.path.exists(out) else 0, 'errors': errors[:20]}
 json.dump(rep, open(O + 'report.json', 'w'), ensure_ascii=False)
 print(json.dumps(rep, ensure_ascii=False))
 sys.exit(0 if code == 0 else 1)          # a frame-count mismatch is in the report; the client flags it
