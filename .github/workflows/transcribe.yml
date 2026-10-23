@@ -33,7 +33,7 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model }}-v1
-      - run: pip install -q faster-whisper==1.1.1 cryptography requests
+      - run: pip install -q faster-whisper==1.1.1 cryptography requests soundfile
       - run: python runner/transcribe.py injob/part${{ matrix.shard }}.enc /tmp/out.enc "${{ inputs.model }}" "${{ inputs.beam }}"
         env: { TX_KEY: '${{ secrets.TX_KEY }}' }
       - name: push result

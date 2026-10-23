@@ -15,8 +15,8 @@ from cryptography.fernet import Fernet
 
 src, dst, model_name, beam = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 f = Fernet(os.environ['TX_KEY'].encode())
-wav = '/tmp/part.wav'
-with open(src, 'rb') as fi, open(wav, 'wb') as fo:
+raw = '/tmp/part.audio'   # 16kHz mono WAV, or Ogg/Opus (the client compresses to make the upload fast)
+with open(src, 'rb') as fi, open(raw, 'wb') as fo:
     fo.write(f.decrypt(fi.read()))
 
 t0 = time.time()
@@ -25,10 +25,12 @@ m = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=os.c
 t1 = time.time()
 # The client always sends 16kHz mono PCM, so read it directly. faster-whisper's own decoder (PyAV)
 # broke on 23/10/2026: the newest av dropped the metadata_errors argument that faster-whisper passes.
-import wave  # noqa: E402
 import numpy as np  # noqa: E402
-with wave.open(wav) as w:
-    audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+import soundfile as sf  # noqa: E402
+audio, rate = sf.read(raw, dtype='float32', always_2d=True)
+audio = audio.mean(axis=1)
+if rate != 16000:   # Opus decodes at 48k; the content is already band-limited to 8k, so plain decimation is enough
+    audio = audio[::3] if rate == 48000 else np.interp(np.arange(0, len(audio), rate / 16000), np.arange(len(audio)), audio).astype(np.float32)
 segs, info = m.transcribe(audio, language='he', beam_size=beam, vad_filter=True, condition_on_previous_text=False)
 text = ' '.join(s.text.strip() for s in segs).strip()
 t2 = time.time()
