@@ -33,7 +33,7 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model }}-v1
-      - run: pip install -q faster-whisper==1.1.1 cryptography
+      - run: pip install -q faster-whisper==1.1.1 cryptography requests
       - run: python runner/transcribe.py injob/part${{ matrix.shard }}.enc /tmp/out.enc "${{ inputs.model }}" "${{ inputs.beam }}"
         env: { TX_KEY: '${{ secrets.TX_KEY }}' }
       - name: push result
@@ -43,3 +43,11 @@ jobs:
           git init -q && git add -A
           git -c user.name=tx-bot -c user.email=tx-bot@users.noreply.github.com commit -q -m "tx ${{ inputs.job }} ${{ matrix.shard }}"
           git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/txo/${{ inputs.job }}-${{ matrix.shard }}"
+      - name: report failure (so the client stops waiting at once)
+        if: failure()
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          rm -rf /tmp/err && mkdir /tmp/err && cd /tmp/err && echo failed > part${{ matrix.shard }}.err
+          git init -q && git add -A
+          git -c user.name=tx-bot -c user.email=tx-bot@users.noreply.github.com commit -q -m "tx failed"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/txo/${{ inputs.job }}-${{ matrix.shard }}"
