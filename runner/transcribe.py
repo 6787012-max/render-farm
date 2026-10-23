@@ -23,7 +23,13 @@ t0 = time.time()
 from faster_whisper import WhisperModel  # noqa: E402  (after decrypt, so a bad key fails fast)
 m = WhisperModel(model_name, device='cpu', compute_type='int8', cpu_threads=os.cpu_count() or 4)
 t1 = time.time()
-segs, info = m.transcribe(wav, language='he', beam_size=beam, vad_filter=True, condition_on_previous_text=False)
+# The client always sends 16kHz mono PCM, so read it directly. faster-whisper's own decoder (PyAV)
+# broke on 23/10/2026: the newest av dropped the metadata_errors argument that faster-whisper passes.
+import wave  # noqa: E402
+import numpy as np  # noqa: E402
+with wave.open(wav) as w:
+    audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+segs, info = m.transcribe(audio, language='he', beam_size=beam, vad_filter=True, condition_on_previous_text=False)
 text = ' '.join(s.text.strip() for s in segs).strip()
 t2 = time.time()
 res = {'text': text, 'audio_sec': round(info.duration, 1), 'load_sec': round(t1 - t0, 1), 'asr_sec': round(t2 - t1, 1)}
