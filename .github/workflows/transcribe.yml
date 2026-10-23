@@ -1,0 +1,45 @@
+name: transcribe
+run-name: tx ${{ inputs.job }}
+# Hebrew speech-to-text for the phone line (sent by C:/phone-line/remote_transcribe.py).
+# PRIVACY: this repo is public. The audio arrives AES-encrypted (Fernet, key = secret TX_KEY) on branch tx/<job>,
+# the text goes back encrypted on branch txo/<job>-<shard>, and the client deletes all branches at the end.
+# Nothing readable may ever be printed to this log: no transcript, no file contents.
+on:
+  workflow_dispatch:
+    inputs:
+      job: { description: 'job id (branch tx/<job>)', required: true, type: string }
+      shards: { description: 'JSON list of part numbers, e.g. [0,1,2]', required: false, type: string, default: '[0]' }
+      model: { description: 'faster-whisper model', required: false, type: string, default: 'ivrit-ai/whisper-large-v3-turbo-ct2' }
+      beam: { description: 'beam size', required: false, type: string, default: '1' }
+permissions:
+  contents: write
+jobs:
+  part:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { sparse-checkout: runner/transcribe.py, sparse-checkout-cone-mode: false }
+      - uses: actions/checkout@v4
+        with: { ref: 'tx/${{ inputs.job }}', path: injob }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: 'pip', cache-dependency-path: runner/transcribe.py }
+      - name: model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}-v1
+      - run: pip install -q faster-whisper==1.1.1 cryptography
+      - run: python runner/transcribe.py injob/part${{ matrix.shard }}.enc /tmp/out.enc "${{ inputs.model }}" "${{ inputs.beam }}"
+        env: { TX_KEY: '${{ secrets.TX_KEY }}' }
+      - name: push result
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          mkdir /tmp/res && cp /tmp/out.enc /tmp/res/part${{ matrix.shard }}.enc && cd /tmp/res
+          git init -q && git add -A
+          git -c user.name=tx-bot -c user.email=tx-bot@users.noreply.github.com commit -q -m "tx ${{ inputs.job }} ${{ matrix.shard }}"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/txo/${{ inputs.job }}-${{ matrix.shard }}"
