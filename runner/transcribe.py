@@ -15,9 +15,15 @@ from cryptography.fernet import Fernet
 
 src, dst, model_name, beam = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 f = Fernet(os.environ['TX_KEY'].encode())
-raw = '/tmp/part.audio'   # 16kHz mono WAV, or Ogg/Opus (the client compresses to make the upload fast)
-with open(src, 'rb') as fi, open(raw, 'wb') as fo:
-    fo.write(f.decrypt(fi.read()))
+import zlib  # noqa: E402
+raw = '/tmp/part.wav'   # a WAV at the phone's own rate (8kHz), zlib-compressed before encryption
+data = f.decrypt(open(src, 'rb').read())
+try:
+    data = zlib.decompress(data)
+except zlib.error:
+    pass
+with open(raw, 'wb') as fo:
+    fo.write(data)
 
 t0 = time.time()
 from faster_whisper import WhisperModel  # noqa: E402  (after decrypt, so a bad key fails fast)
@@ -29,8 +35,9 @@ import numpy as np  # noqa: E402
 import soundfile as sf  # noqa: E402
 audio, rate = sf.read(raw, dtype='float32', always_2d=True)
 audio = audio.mean(axis=1)
-if rate != 16000:   # Opus decodes at 48k; the content is already band-limited to 8k, so plain decimation is enough
-    audio = audio[::3] if rate == 48000 else np.interp(np.arange(0, len(audio), rate / 16000), np.arange(len(audio)), audio).astype(np.float32)
+if rate != 16000:
+    import soxr  # noqa: E402
+    audio = soxr.resample(audio, rate, 16000).astype(np.float32)
 segs, info = m.transcribe(audio, language='he', beam_size=beam, vad_filter=True, condition_on_previous_text=False)
 text = ' '.join(s.text.strip() for s in segs).strip()
 t2 = time.time()
