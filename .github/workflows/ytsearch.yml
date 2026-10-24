@@ -41,7 +41,7 @@ jobs:
               except Exception:
                   return ""
           def ids(q):
-              return [l.split("\t") for l in run(["--flat-playlist", "--print", "%(id)s\t%(duration)s", f"ytsearch{PER}:{q}"]).splitlines() if l.strip()]
+              return [l.split("\t") for l in run(["--flat-playlist", "--print", "%(id)s\t%(duration)s\t%(channel)s\t%(title)s", f"ytsearch{PER}:{q}"]).splitlines() if l.strip()]
           def meta(v):
               try:
                   j = json.loads(run(["-J", "--skip-download", "https://www.youtube.com/watch?v=" + v]) or "null")
