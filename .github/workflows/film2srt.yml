@@ -32,7 +32,7 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model }}-film-v1
-      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg >/dev/null && pip install -q faster-whisper==1.1.1
+      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg >/dev/null && pip install -q faster-whisper==1.1.1 requests
       - name: transcribe part
         env:
           URL: ${{ inputs.url }}
