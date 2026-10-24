@@ -1,0 +1,59 @@
+name: burnsubs
+run-name: burnsubs ${{ inputs.out_name }}
+# Burns an SRT (from Drive) into a video (from Drive) and uploads the result to Drive. Only Drive ids in the log.
+on:
+  workflow_dispatch:
+    inputs:
+      video_id: { description: 'Drive id of the video', required: true, type: string }
+      srt_id: { description: 'Drive id of the srt', required: true, type: string }
+      folder_id: { description: 'Drive folder for the result', required: true, type: string }
+      out_name: { description: 'result file name', required: true, type: string }
+jobs:
+  burn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg fonts-noto-core fonts-culmus >/dev/null && pip install -q requests
+      - name: burn and upload
+        env:
+          VID: ${{ inputs.video_id }}
+          SRT: ${{ inputs.srt_id }}
+          FOLDER: ${{ inputs.folder_id }}
+          OUTNAME: ${{ inputs.out_name }}
+          DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
+          DRIVE_CLIENT_SECRET: ${{ secrets.DRIVE_CLIENT_SECRET }}
+          DRIVE_REFRESH_TOKEN: ${{ secrets.DRIVE_REFRESH_TOKEN }}
+        run: |
+          cat > b.py <<'EOF'
+          import os, json, subprocess, requests
+          def tok():
+              return requests.post("https://oauth2.googleapis.com/token", data={"client_id": os.environ["DRIVE_CLIENT_ID"],
+                  "client_secret": os.environ["DRIVE_CLIENT_SECRET"], "refresh_token": os.environ["DRIVE_REFRESH_TOKEN"],
+                  "grant_type": "refresh_token"}).json()["access_token"]
+          def get(fid, path):
+              with requests.get(f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media",
+                                headers={"Authorization": "Bearer " + tok()}, stream=True) as r:
+                  r.raise_for_status()
+                  with open(path, "wb") as f:
+                      for c in r.iter_content(1 << 22): f.write(c)
+          get(os.environ["VID"], "in.mp4"); get(os.environ["SRT"], "he.srt")
+          style = "FontName=Noto Sans Hebrew,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=22"
+          subprocess.run(["ffmpeg", "-v", "error", "-stats_period", "60", "-i", "in.mp4",
+                          "-vf", f"subtitles=he.srt:charenc=UTF-8:force_style='{style}'",
+                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "copy",
+                          "-movflags", "+faststart", "out.mp4"], check=True)
+          size = os.path.getsize("out.mp4")
+          r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+              headers={"Authorization": "Bearer " + tok(), "Content-Type": "application/json; charset=UTF-8",
+                       "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)},
+              data=json.dumps({"name": os.environ["OUTNAME"], "parents": [os.environ["FOLDER"]]}).encode())
+          loc = r.headers["Location"]; ch = 32 << 20; sent = 0
+          with open("out.mp4", "rb") as f:
+              while sent < size:
+                  b = f.read(ch); end = sent + len(b) - 1
+                  rr = requests.put(loc, data=b, headers={"Content-Range": f"bytes {sent}-{end}/{size}"})
+                  if rr.status_code not in (200, 201, 308): rr.raise_for_status()
+                  sent = end + 1
+          print("uploaded", rr.json().get("id"), size // 1_000_000, "MB")
+          EOF
+          python b.py
