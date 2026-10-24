@@ -1,0 +1,124 @@
+name: subs-he
+run-name: subs-he ${{ inputs.name }}
+# English cues (JSON in Drive) -> Hebrew SRT (offline NLLB, no external API) -> SRT to Drive -> burned-in copy of the video to Drive.
+# Log prints only counts and Drive ids, never subtitle text.
+on:
+  workflow_dispatch:
+    inputs:
+      cues_id: { description: 'Drive id of cues.json', required: true, type: string }
+      video_id: { description: 'Drive id of the video', required: true, type: string }
+      folder_id: { description: 'Drive folder for results', required: true, type: string }
+      name: { description: 'base name for result files', required: true, type: string }
+      model: { description: 'translation model', required: false, type: string, default: 'facebook/nllb-200-distilled-1.3B' }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}-mt-v1
+      - run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg fonts-noto-core fonts-culmus >/dev/null
+          pip install -q requests sentencepiece "transformers<5" && pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+      - name: translate, build srt, burn, upload
+        env:
+          CUES: ${{ inputs.cues_id }}
+          VID: ${{ inputs.video_id }}
+          FOLDER: ${{ inputs.folder_id }}
+          NAME: ${{ inputs.name }}
+          MODEL: ${{ inputs.model }}
+          DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
+          DRIVE_CLIENT_SECRET: ${{ secrets.DRIVE_CLIENT_SECRET }}
+          DRIVE_REFRESH_TOKEN: ${{ secrets.DRIVE_REFRESH_TOKEN }}
+        run: |
+          cat > r.py <<'EOF'
+          import os, json, subprocess, requests, time
+          def tok():
+              return requests.post("https://oauth2.googleapis.com/token", data={"client_id": os.environ["DRIVE_CLIENT_ID"],
+                  "client_secret": os.environ["DRIVE_CLIENT_SECRET"], "refresh_token": os.environ["DRIVE_REFRESH_TOKEN"],
+                  "grant_type": "refresh_token"}).json()["access_token"]
+          def get(fid, path):
+              with requests.get(f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media",
+                                headers={"Authorization": "Bearer " + tok()}, stream=True) as r:
+                  r.raise_for_status()
+                  with open(path, "wb") as f:
+                      for c in r.iter_content(1 << 22): f.write(c)
+          def upload(path, name, mime):
+              size = os.path.getsize(path)
+              r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+                  headers={"Authorization": "Bearer " + tok(), "Content-Type": "application/json; charset=UTF-8",
+                           "X-Upload-Content-Type": mime, "X-Upload-Content-Length": str(size)},
+                  data=json.dumps({"name": name, "parents": [os.environ["FOLDER"]]}).encode())
+              loc = r.headers["Location"]; ch = 32 << 20; sent = 0; rr = None
+              with open(path, "rb") as f:
+                  while sent < size:
+                      b = f.read(ch); end = sent + len(b) - 1
+                      rr = requests.put(loc, data=b, headers={"Content-Range": f"bytes {sent}-{end}/{size}"})
+                      if rr.status_code not in (200, 201, 308): rr.raise_for_status()
+                      sent = end + 1
+              return rr.json().get("id")
+
+          get(os.environ["CUES"], "cues.json")
+          cues = json.load(open("cues.json", encoding="utf-8"))
+          src = [c["text"] for c in cues]
+
+          import torch
+          from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+          torch.set_num_threads(4)
+          t0 = time.time()
+          tk = AutoTokenizer.from_pretrained(os.environ["MODEL"], src_lang="eng_Latn")
+          mdl = AutoModelForSeq2SeqLM.from_pretrained(os.environ["MODEL"]).eval()
+          he_id = tk.convert_tokens_to_ids("heb_Hebr")
+          out = []
+          B = 16
+          for i in range(0, len(src), B):
+              batch = src[i:i + B]
+              enc = tk(batch, return_tensors="pt", padding=True, truncation=True, max_length=128)
+              with torch.no_grad():
+                  gen = mdl.generate(**enc, forced_bos_token_id=he_id, max_new_tokens=96, num_beams=3)
+              out += tk.batch_decode(gen, skip_special_tokens=True)
+              if (i // B) % 10 == 0:
+                  print("translated", len(out), "of", len(src), "secs", int(time.time() - t0), flush=True)
+          print("translation done", len(out), "secs", int(time.time() - t0))
+
+          def ts(x):
+              h, x = divmod(x, 3600); m, x = divmod(x, 60)
+              return "%02d:%02d:%02d,%03d" % (h, m, int(x), int(round((x - int(x)) * 1000)) % 1000)
+          def wrap(t):
+              if len(t) <= 42: return t
+              w = t.split(); best = None
+              for k in range(1, len(w)):
+                  a, b = " ".join(w[:k]), " ".join(w[k:])
+                  sc = max(len(a), len(b))
+                  if best is None or sc < best[0]: best = (sc, a + "\n" + b)
+              return best[1] if best else t
+          RLE = "‫"
+          n = 0
+          with open("he.srt", "w", encoding="utf-8-sig") as f:
+              for c, t in zip(cues, out):
+                  t = t.strip()
+                  if not t: continue
+                  n += 1
+                  lines = "\n".join(RLE + l for l in wrap(t).split("\n"))
+                  f.write(f"{n}\n{ts(c['start'])} --> {ts(c['end'])}\n{lines}\n\n")
+          print("srt cues", n, "srt drive id", upload("he.srt", os.environ["NAME"] + " - Hebrew.srt", "application/x-subrip"))
+
+          get(os.environ["VID"], "in.mp4")
+          # libass needs the srt without BOM/RLE marks for clean shaping; fribidi handles direction itself
+          with open("he.srt", encoding="utf-8-sig") as f: s = f.read().replace(RLE, "")
+          open("burn.srt", "w", encoding="utf-8").write(s)
+          style = "FontName=Noto Sans Hebrew,FontSize=24,Bold=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,MarginV=22"
+          t1 = time.time()
+          subprocess.run(["ffmpeg", "-v", "error", "-i", "in.mp4", "-vf", f"subtitles=burn.srt:charenc=UTF-8:force_style='{style}'",
+                          "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-c:a", "aac", "-b:a", "160k",
+                          "-movflags", "+faststart", "out.mp4"], check=True)
+          print("burn secs", int(time.time() - t1))
+          print("video drive id", upload("out.mp4", os.environ["NAME"] + " - Hebrew subtitles.mp4", "video/mp4"),
+                os.path.getsize("out.mp4") // 1_000_000, "MB")
+          EOF
+          python r.py
