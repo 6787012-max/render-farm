@@ -1,0 +1,77 @@
+name: drivefilm-tx
+run-name: drivefilm-tx ${{ inputs.name }}
+# English speech-to-text for a film stored in the owner's Google Drive. Nothing readable is printed to the log:
+# the parts go straight back to a Drive folder. Inputs are Drive ids only.
+on:
+  workflow_dispatch:
+    inputs:
+      file_id: { description: 'Drive file id of the video', required: true, type: string }
+      out_folder: { description: 'Drive folder id for the part files', required: true, type: string }
+      name: { description: 'short name', required: true, type: string }
+      parts: { description: 'parallel parts', required: false, type: string, default: '8' }
+      model: { description: 'faster-whisper model', required: false, type: string, default: 'small.en' }
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - id: p
+        run: python3 -c "import json;print('shards='+json.dumps(list(range(int('${{ inputs.parts }}')))))" >> $GITHUB_OUTPUT
+  part:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ inputs.model }}-film-v1
+      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg >/dev/null && pip install -q faster-whisper==1.1.1 requests
+      - name: transcribe part
+        env:
+          FILE_ID: ${{ inputs.file_id }}
+          OUT: ${{ inputs.out_folder }}
+          NAME: ${{ inputs.name }}
+          N: ${{ inputs.parts }}
+          I: ${{ matrix.shard }}
+          MODEL: ${{ inputs.model }}
+          DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
+          DRIVE_CLIENT_SECRET: ${{ secrets.DRIVE_CLIENT_SECRET }}
+          DRIVE_REFRESH_TOKEN: ${{ secrets.DRIVE_REFRESH_TOKEN }}
+        run: |
+          cat > t.py <<'EOF'
+          import os, json, subprocess, requests
+          tok = requests.post("https://oauth2.googleapis.com/token", data={"client_id": os.environ["DRIVE_CLIENT_ID"],
+              "client_secret": os.environ["DRIVE_CLIENT_SECRET"], "refresh_token": os.environ["DRIVE_REFRESH_TOKEN"],
+              "grant_type": "refresh_token"}).json()["access_token"]
+          H = {"Authorization": "Bearer " + tok}
+          with requests.get(f"https://www.googleapis.com/drive/v3/files/{os.environ['FILE_ID']}?alt=media", headers=H, stream=True) as r:
+              r.raise_for_status()
+              with open("v.mp4", "wb") as f:
+                  for c in r.iter_content(1 << 22): f.write(c)
+          dur = float(subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration","-of","csv=p=0","v.mp4"]).decode())
+          n = int(os.environ["N"]); i = int(os.environ["I"]); L = dur / n; start = i * L
+          subprocess.run(["ffmpeg","-v","error","-ss",str(start),"-t",str(L + 3),"-i","v.mp4","-vn","-ac","1","-ar","16000","a.wav"], check=True)
+          from faster_whisper import WhisperModel
+          m = WhisperModel(os.environ["MODEL"], device="cpu", compute_type="int8", cpu_threads=4)
+          segs, _ = m.transcribe("a.wav", beam_size=5, vad_filter=True, language="en", condition_on_previous_text=False)
+          out = []
+          for s in segs:
+              if s.start >= L: break
+              out.append({"start": round(s.start + start, 2), "end": round(min(s.end, L + 2) + start, 2), "text": s.text.strip()})
+          body = json.dumps({"part": i, "parts": n, "duration": dur, "segments": out}).encode()
+          meta = {"name": f"{os.environ['NAME']}.part{i:02d}.json", "parents": [os.environ["OUT"]]}
+          r = requests.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", headers=H,
+              files={"metadata": ("m", json.dumps(meta), "application/json"), "file": ("f", body, "application/json")})
+          r.raise_for_status()
+          print("part", i, "segments", len(out), "uploaded")
+          EOF
+          python t.py
