@@ -1,0 +1,71 @@
+name: ytsearch
+on:
+  workflow_dispatch:
+    inputs:
+      queries:
+        description: 'search queries separated by |'
+        required: true
+      per:
+        description: 'results per query'
+        default: '15'
+      min_minutes:
+        description: 'minimum duration in minutes'
+        default: '0'
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: pip install -q -U yt-dlp
+      - name: search
+        env:
+          QUERIES: ${{ inputs.queries }}
+          PER: ${{ inputs.per }}
+          MINM: ${{ inputs.min_minutes }}
+        run: |
+          cat > s.py <<'EOF'
+          import json, os, subprocess
+          from concurrent.futures import ThreadPoolExecutor
+          Q = [q.strip() for q in os.environ["QUERIES"].split("|") if q.strip()]
+          PER = int(os.environ["PER"]); MINM = int(os.environ["MINM"])
+          def run(a, t=150):
+              try:
+                  return subprocess.run(["yt-dlp", "--js-runtimes", "node", "--no-warnings"] + a,
+                      capture_output=True, text=True, timeout=t).stdout
+              except Exception:
+                  return ""
+          def ids(q):
+              return [l.split("\t") for l in run(["--flat-playlist", "--print", "%(id)s\t%(duration)s", f"ytsearch{PER}:{q}"]).splitlines() if l.strip()]
+          def meta(v):
+              try:
+                  j = json.loads(run(["-J", "--skip-download", "https://www.youtube.com/watch?v=" + v]) or "null")
+              except Exception:
+                  return None
+              if not j: return None
+              subs = sorted((j.get("subtitles") or {}).keys())
+              return {"id": v, "title": j.get("title"), "channel": j.get("channel"),
+                      "channel_verified": j.get("channel_is_verified"), "channel_followers": j.get("channel_follower_count"),
+                      "minutes": round((j.get("duration") or 0) / 60), "views": j.get("view_count"),
+                      "license": j.get("license"), "he_subs": [s for s in subs if s.split("-")[0] in ("he", "iw")],
+                      "subs": subs[:40]}
+          seen = []
+          with ThreadPoolExecutor(4) as ex:
+              for lst in ex.map(ids, Q):
+                  for row in lst:
+                      v = row[0]; d = row[1] if len(row) > 1 else "NA"
+                      try: dm = float(d) / 60
+                      except Exception: dm = 999
+                      if v not in seen and dm >= MINM: seen.append(v)
+          with ThreadPoolExecutor(6) as ex:
+              rows = [m for m in ex.map(meta, seen) if m]
+          json.dump(rows, open("results.json", "w"), ensure_ascii=False, indent=1)
+          print("candidates", len(seen), "checked", len(rows), "with he subs", sum(1 for r in rows if r["he_subs"]))
+          EOF
+          python s.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results
+          path: results.json
