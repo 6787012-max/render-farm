@@ -58,7 +58,7 @@ jobs:
                       mp4 = [f for f in files if f["name"].lower().endswith(".mp4")]
                       if not mp4: continue
                       best = max(mp4, key=lambda f: int(f.get("size", 0)))
-                      if int(best.get("size", 0)) < 200_000_000: continue
+                      if int(best.get("size", 0)) < 80_000_000: continue
                       url = f"https://archive.org/download/{ident}/" + P.quote(best["name"])
                       print("QUERY", q, "->", ident, best["name"], int(best["size"]) // 1_000_000, "MB")
                       os.system(f'curl -sL --retry 5 -o v.mp4 "{url}"')
