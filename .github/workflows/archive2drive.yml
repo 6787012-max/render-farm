@@ -1,0 +1,74 @@
+name: archive2drive
+on:
+  workflow_dispatch:
+    inputs:
+      queries:
+        description: 'archive.org search queries separated by |  (best match per query is downloaded)'
+        required: true
+      folder_id:
+        description: 'Drive folder id'
+        required: true
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: fetch and upload
+        env:
+          QUERIES: ${{ inputs.queries }}
+          FOLDER: ${{ inputs.folder_id }}
+          DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
+          DRIVE_CLIENT_SECRET: ${{ secrets.DRIVE_CLIENT_SECRET }}
+          DRIVE_REFRESH_TOKEN: ${{ secrets.DRIVE_REFRESH_TOKEN }}
+        run: |
+          cat > a.py <<'EOF'
+          import json, os, urllib.request as R, urllib.parse as P, mimetypes
+          def get(u, t=120): return json.load(R.urlopen(R.Request(u, headers={"User-Agent": "Mozilla/5.0"}), timeout=t))
+          def token():
+              d = P.urlencode({"client_id": os.environ["DRIVE_CLIENT_ID"], "client_secret": os.environ["DRIVE_CLIENT_SECRET"],
+                               "refresh_token": os.environ["DRIVE_REFRESH_TOKEN"], "grant_type": "refresh_token"}).encode()
+              return json.load(R.urlopen("https://oauth2.googleapis.com/token", d))["access_token"]
+          def upload(path, name):
+              tok = token(); size = os.path.getsize(path)
+              mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+              r = R.urlopen(R.Request("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+                  data=json.dumps({"name": name, "parents": [os.environ["FOLDER"]]}).encode(), method="POST",
+                  headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8",
+                           "X-Upload-Content-Type": mime, "X-Upload-Content-Length": str(size)}))
+              loc = r.headers["Location"]; ch = 16 * 1024 * 1024; sent = 0
+              with open(path, "rb") as f:
+                  while sent < size:
+                      b = f.read(ch); end = sent + len(b) - 1
+                      try:
+                          resp = R.urlopen(R.Request(loc, data=b, method="PUT", headers={
+                              "Content-Length": str(len(b)), "Content-Range": f"bytes {sent}-{end}/{size}"}), timeout=600)
+                          print("uploaded", name, json.load(resp).get("id"))
+                      except R.HTTPError as e:
+                          if e.code != 308: raise
+                      sent = end + 1
+          for q in [x.strip() for x in os.environ["QUERIES"].split("|") if x.strip()]:
+              try:
+                  s = get("https://archive.org/advancedsearch.php?" + P.urlencode({"q": q + " AND mediatype:movies",
+                          "fl[]": "identifier", "sort[]": "downloads desc", "rows": "5", "output": "json"}))
+                  docs = s["response"]["docs"]
+                  done = False
+                  for d in docs:
+                      ident = d["identifier"]
+                      files = get(f"https://archive.org/metadata/{ident}")["files"]
+                      mp4 = [f for f in files if f["name"].lower().endswith(".mp4")]
+                      if not mp4: continue
+                      best = max(mp4, key=lambda f: int(f.get("size", 0)))
+                      if int(best.get("size", 0)) < 200_000_000: continue
+                      url = f"https://archive.org/download/{ident}/" + P.quote(best["name"])
+                      print("QUERY", q, "->", ident, best["name"], int(best["size"]) // 1_000_000, "MB")
+                      os.system(f'curl -sL --retry 5 -o v.mp4 "{url}"')
+                      upload("v.mp4", f"{ident}.mp4")
+                      for sub in [f for f in files if f["name"].lower().endswith((".srt", ".vtt"))][:3]:
+                          os.system(f'curl -sL -o s.sub "https://archive.org/download/{ident}/{P.quote(sub["name"])}"')
+                          upload("s.sub", sub["name"])
+                      os.remove("v.mp4"); done = True; break
+                  if not done: print("QUERY", q, "-> nothing suitable")
+              except Exception as e:
+                  print("QUERY", q, "FAILED", e)
+          EOF
+          python a.py
