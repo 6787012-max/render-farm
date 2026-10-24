@@ -54,6 +54,7 @@ jobs:
                       "minutes": round((j.get("duration") or 0) / 60), "views": j.get("view_count"),
                       "license": j.get("license"), "he_subs": [s for s in subs if s.split("-")[0] in ("he", "iw")],
                       "subs": subs[:40]}
+          flat = {}
           seen = []
           with ThreadPoolExecutor(4) as ex:
               for lst in ex.map(ids, Q):
@@ -61,7 +62,9 @@ jobs:
                       v = row[0]; d = row[1] if len(row) > 1 else "NA"
                       try: dm = float(d) / 60
                       except Exception: dm = 999
-                      if v not in seen and dm >= MINM: seen.append(v)
+                      if v not in seen and dm >= MINM:
+                          seen.append(v); flat[v] = {"id": v, "minutes": round(dm), "channel": row[2] if len(row) > 2 else "", "title": row[3] if len(row) > 3 else ""}
+          json.dump(list(flat.values()), open("flat.json", "w"), ensure_ascii=False, indent=1)
           with ThreadPoolExecutor(6) as ex:
               rows = [m for m in ex.map(meta, seen) if m]
           json.dump(rows, open("results.json", "w"), ensure_ascii=False, indent=1)
@@ -71,4 +74,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: results
-          path: results.json
+          path: |
+            results.json
+            flat.json
