@@ -34,7 +34,7 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model }}-film-v1
-      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg >/dev/null && pip install -q faster-whisper==1.1.1 requests
+      - run: sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg >/dev/null && pip install -q faster-whisper==1.1.1 requests soundfile
       - name: transcribe part
         env:
           FILE_ID: ${{ inputs.file_id }}
@@ -62,7 +62,9 @@ jobs:
           subprocess.run(["ffmpeg","-v","error","-ss",str(start),"-t",str(L + 3),"-i","v.mp4","-vn","-ac","1","-ar","16000","a.wav"], check=True)
           from faster_whisper import WhisperModel
           m = WhisperModel(os.environ["MODEL"], device="cpu", compute_type="int8", cpu_threads=4)
-          segs, _ = m.transcribe("a.wav", beam_size=5, vad_filter=True, language="en", condition_on_previous_text=False)
+          import soundfile as sf
+          audio, _sr = sf.read("a.wav", dtype="float32")
+          segs, _ = m.transcribe(audio, beam_size=5, vad_filter=True, language="en", condition_on_previous_text=False)
           out = []
           for s in segs:
               if s.start >= L: break
