@@ -16,9 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/setup-node@v4
+      - uses: fscarmen/warp-on-actions@v1.1
         with:
-          node-version: '20'
+          stack: dual
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - run: pip install -q -U yt-dlp
       - name: search
         env:
@@ -33,7 +36,7 @@ jobs:
           PER = int(os.environ["PER"]); MINM = int(os.environ["MINM"])
           def run(a, t=150):
               try:
-                  return subprocess.run(["yt-dlp", "--js-runtimes", "node", "--no-warnings"] + a,
+                  return subprocess.run(["yt-dlp", "--no-warnings"] + a,
                       capture_output=True, text=True, timeout=t).stdout
               except Exception:
                   return ""
