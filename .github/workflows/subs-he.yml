@@ -23,7 +23,7 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-${{ inputs.model }}-mt-v1
       - run: |
-          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg fonts-noto-core fonts-culmus >/dev/null
+          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg fonts-noto-core >/dev/null
           pip install -q requests sentencepiece "transformers<5" && pip install -q torch --index-url https://download.pytorch.org/whl/cpu
       - name: translate, build srt, burn, upload
         env:
