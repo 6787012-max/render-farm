@@ -1,0 +1,1 @@
+{"cmd": "python3 $FARM/runner/seek_render.py lessons/02/scenes/a0_opener.html --fps 30", "merge": "python3 $FARM/runner/seek_merge.py video.mp4 --sfx-dir none", "workers": 3}
