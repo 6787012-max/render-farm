@@ -11,6 +11,7 @@ frames, sfx, errors}. The sound (music + effects) is mixed by the client, becaus
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -59,7 +60,8 @@ for i in mine:
     code = subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', wd + '/parts.txt',
                            '-c', 'copy', '-movflags', '+faststart', video]).returncode
     frames = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries', 'stream=nb_read_packets',
-                             '-of', 'csv=p=0', video], capture_output=True, text=True).stdout.strip()
+                             '-of', 'csv=p=0', video], capture_output=True, text=True).stdout
+    frames = (re.findall(r'\d+', frames) or ['0'])[0]  # csv can end with a comma ('996,')
     json.dump({'dur': meta['dur'], 'fps': meta['fps'], 'frames_expected': meta['frames'], 'frames': int(frames or 0), 'sfx': meta['sfx'],
                'errors': errors[:20]}, open(os.path.join(root, 'out', name + '.json'), 'w'), ensure_ascii=False)
     print('  %s ok: %d/%d frames, %.0fs' % (name, int(frames or 0), meta['frames'], time.time() - t0), flush=True)
