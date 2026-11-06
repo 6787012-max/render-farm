@@ -1,0 +1,1 @@
+{"cmd": "python3 $FARM/runner/seek_multi.py scenes.json --fps 12", "merge": "", "workers": 3}
