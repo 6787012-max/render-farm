@@ -1,0 +1,55 @@
+name: transcribe-push
+run-name: txp ${{ github.ref_name }}
+# Same as transcribe.yml, but started by the upload itself (push to tx/**), which saves the ~12s of a
+# workflow_dispatch round trip. The pushed commit carries this file, runner/transcribe.py, job.json and the
+# encrypted parts. Fixed matrix of 16; a shard with no part of its own stops after the checkout.
+# PRIVACY: public repo. Audio and text are Fernet-encrypted (secret TX_KEY). Never print anything readable.
+on:
+  push:
+    branches: ['tx/**']
+permissions:
+  contents: write
+jobs:
+  part:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - id: have
+        run: |
+          if [ -f part${{ matrix.shard }}.enc ]; then echo "yes=1" >> "$GITHUB_OUTPUT"; fi
+          python3 -c "import json;j=json.load(open('job.json'));print('model='+j['model']);print('beam=%d'%j['beam']);print('vad=%d'%j.get('vad',1));print('job='+j['job'])" >> "$GITHUB_OUTPUT"
+      - if: steps.have.outputs.yes
+        name: python env cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/txenv
+          key: tx-${{ steps.have.outputs.model }}-env-v1
+      - if: steps.have.outputs.yes
+        run: |
+          [ -x ~/txenv/bin/python ] || { python3 -m venv ~/txenv && ~/txenv/bin/pip install -q faster-whisper==1.1.1 cryptography requests soundfile soxr; }
+      - if: steps.have.outputs.yes
+        run: ~/txenv/bin/python runner/transcribe.py part${{ matrix.shard }}.enc /tmp/out.enc "${{ steps.have.outputs.model }}" "${{ steps.have.outputs.beam }}" "${{ steps.have.outputs.vad }}"
+        env: { TX_KEY: '${{ secrets.TX_KEY }}' }
+      - if: steps.have.outputs.yes
+        name: push result
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          mkdir /tmp/res && cp /tmp/out.enc /tmp/res/part${{ matrix.shard }}.enc && cd /tmp/res
+          git init -q && git add -A
+          git -c user.name=tx-bot -c user.email=tx-bot@users.noreply.github.com commit -q -m "tx"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/txo/${{ steps.have.outputs.job }}-${{ matrix.shard }}"
+      - name: report failure (so the client stops waiting at once)
+        if: failure() && steps.have.outputs.yes
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          rm -rf /tmp/err && mkdir /tmp/err && cd /tmp/err && echo failed > part${{ matrix.shard }}.err
+          git init -q && git add -A
+          git -c user.name=tx-bot -c user.email=tx-bot@users.noreply.github.com commit -q -m "tx failed"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/txo/${{ steps.have.outputs.job }}-${{ matrix.shard }}"
