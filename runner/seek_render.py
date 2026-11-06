@@ -39,7 +39,7 @@ with sync_playwright() as p:
         pg.on('pageerror', lambda e: errors.append(str(e)[:400]))
         pg.on('console', lambda m: errors.append(m.text[:400]) if m.type == 'error' else None)
         pg.goto('file://' + scene, wait_until='load')
-        pg.wait_for_function('window.__ready === true', timeout=90000)
+        pg.wait_for_function('window.__ready === true', timeout=300000)   # heavy scenes (a globe built from map polygons) took 60-90 s locally to get ready
         dur = float(pg.evaluate('window.__dur'))
         missing = pg.evaluate('window.__missing || []')
         if missing:
