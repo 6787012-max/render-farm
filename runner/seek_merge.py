@@ -7,6 +7,7 @@ Leaves only out/<name> and out/report.json.
 """
 import glob
 import json
+import re
 import os
 import subprocess
 import sys
@@ -57,6 +58,7 @@ code = subprocess.run(cmd).returncode
 vdur = float(subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out], capture_output=True, text=True).stdout or 0)
 frames = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', tmp],
                         capture_output=True, text=True).stdout.strip()
+frames = (re.findall(r'\d+', frames) or ['0'])[0]  # csv can end with a comma ('8338,'), as in seek_multi
 for f in parts + glob.glob(O + 'err_*.json') + [O + 'meta.json']:
     os.remove(f)
 rep = {'dur': length, 'video_dur': round(vdur, 2), 'frames_expected': meta['frames'], 'frames': int(frames or 0), 'parts': len(parts),
