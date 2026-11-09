@@ -1,0 +1,36 @@
+name: render-warp
+run-name: ${{ inputs.job }}
+# כמו render.yml (שרת יחיד), אבל עם WARP ו-deno כדי שיוטיוב לא יחסום IP של מרכז נתונים. נוסף ל-play.py של שלוחה 5 (09/11/2026).
+on:
+  workflow_dispatch:
+    inputs:
+      job: { description: 'job id (branch in/<job>)', required: true, type: string }
+      shards: { description: 'unused', required: false, type: string, default: '[0]' }
+      nshards: { description: 'unused', required: false, type: string, default: '1' }
+permissions:
+  contents: write
+jobs:
+  part:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      FARM: ${{ github.workspace }}
+      SHARD: '0'
+      SHARDS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { ref: 'in/${{ inputs.job }}', path: injob }
+      - uses: fscarmen/warp-on-actions@v1.1
+        with:
+          stack: dual
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -q -U yt-dlp
+      - run: python runner/stage.py part injob /tmp/w
+      - run: python runner/stage.py merge injob /tmp/w
+      - run: python runner/push_result.py /tmp/w/out "${{ inputs.job }}"
+        env: { GH_TOKEN: '${{ github.token }}' }
