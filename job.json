@@ -1,0 +1,1 @@
+{"cmd": "mkdir -p out && cd out && curl -sSL -r 0-241748769 -o w.q && split -b 60m w.q w.q1_ && rm w.q && ls -la", "merge": "", "workers": 3}
