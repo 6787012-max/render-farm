@@ -63,9 +63,18 @@ def do_search(query, per, client):
         sys.exit('search: no results. yt-dlp said: ' + r.stderr[-800:])
 
 
+def ensure_ffmpeg():
+    # render-warp.yml does not run runner/setup.sh, and the ubuntu image had no ffmpeg on 17/11
+    if shutil.which('ffmpeg'):
+        return
+    subprocess.run('sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg',
+                   shell=True, check=True)
+
+
 def do_get(vid, cuts, client):
     if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid):
         sys.exit('bad video id: %r' % vid)
+    ensure_ffmpeg()
     os.makedirs('out', exist_ok=True)
     os.makedirs('work', exist_ok=True)
     fmt = 'bv*[height<=720]/b[height<=720]' if cuts else 'bv*[height<=720]+ba/b[height<=720]/b'
