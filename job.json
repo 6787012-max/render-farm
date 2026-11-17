@@ -1,0 +1,1 @@
+{"cmd": "python3 pl_job.py build spec.json", "merge": "", "workers": 3}
