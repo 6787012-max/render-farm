@@ -1,0 +1,1 @@
+{"cmd": "pip install -q numpy opencv-python-headless pillow python-bidi==0.6.7 && PACK=$PWD ONLY=4 SHARD=0 SHARDS=1 python3 build_v5.py shard", "merge": "", "workers": 1}
