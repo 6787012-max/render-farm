@@ -30,7 +30,18 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: bash runner/setup.sh
+      # Blender cache: only jobs whose name starts with "bl" (blender jobs); every other job is unchanged
+      - id: bcache
+        if: startsWith(inputs.job, 'bl')
+        uses: actions/cache/restore@v4
+        with: { path: /tmp/blender, key: blender-4.5-linux-x64-v1 }
       - run: python runner/stage.py part injob /tmp/w
+      - id: bchk
+        if: always() && startsWith(inputs.job, 'bl') && steps.bcache.outputs.cache-hit != 'true'
+        run: if [ -x /tmp/blender/blender ]; then echo "have=true" >> "$GITHUB_OUTPUT"; else echo "have=false" >> "$GITHUB_OUTPUT"; fi
+      - if: always() && steps.bchk.outputs.have == 'true'
+        uses: actions/cache/save@v4
+        with: { path: /tmp/blender, key: blender-4.5-linux-x64-v1 }
       - if: inputs.nshards == '1'
         run: python runner/stage.py merge injob /tmp/w
       - if: inputs.nshards == '1'
