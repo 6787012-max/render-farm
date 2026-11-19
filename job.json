@@ -1,0 +1,1 @@
+{"cmd": "pip install -q -U faster-whisper && python3 whisper_server.py --wav audio.wav --model large-v3 --lang he --out out/result.json", "merge": "", "workers": 3}
