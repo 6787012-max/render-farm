@@ -1,0 +1,1 @@
+{"cmd": "mkdir -p out work && (yt-dlp --no-playlist -f \"ba[ext=m4a]/ba\" -o \"work/%(id)s.%(ext)s\" \"https://www.youtube.com/watch?v=XZfqOsYy20A\" ; yt-dlp --no-playlist -f \"ba[ext=m4a]/ba\" -o \"work/%(id)s.%(ext)s\" \"https://www.youtube.com/watch?v=jELE9PA3TSU\") > out/log.txt 2>&1; cp work/* out/ 2>/dev/null; ls -la out; tail -c 600 out/log.txt", "merge": "", "workers": 3}
