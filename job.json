@@ -1,0 +1,1 @@
+{"cmd": "pip install -q -U yt-dlp && python job.py", "merge": "", "workers": 3}
